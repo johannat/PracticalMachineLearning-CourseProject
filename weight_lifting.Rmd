@@ -1,0 +1,76 @@
+---
+title: "Predicting the manner of weight lifting"
+date: "23/8/2015"
+output: html_document
+---
+
+*In this report we study the [Weight Lifting Exercises Dataset by Velloso et al](http://groupware.les.inf.puc-rio.br/har) and train a machine learning algorithm to classify any set of simultaneous measurements as being part of one of the actual activities performed (A, B, C, D or E). The measurements come from accelerometers attached to the arm, forearm, belt and dumbbell of the six test persons. We use a simple random forest for the classification task and in this instance it seems to be performing almost perfectly even with no "tweaks".*
+
+First we need to load the required libraries and set the seed for the random number generator to ensure reproducibility.
+
+```{r prereqs}
+library(caret)
+library(randomForest)
+set.seed(1337)
+```
+
+Next we need to load the provided data.
+
+```{r read-data}
+quiz     <- read.csv("pml-testing.csv")
+training <- read.csv("pml-training.csv")
+```
+
+The training dataset contains `r nrow(training)` sets of measurements including column 'classe' that contains the type of activity to be predicted. The quiz dataset has `r nrow(quiz)` observations for which the class is not known (there's a problem ID instead) but should be predicted with the machine learning algorithm we are going to train.
+
+There are a total of `r ncol(training)` columns in each of the dataset. Out of those the first 7 are identifying columns containing information concerning the test subject, time stamps and what measurement window the current observation belongs to. Then there are `r ncol(quiz) - 7 - sum(colSums(is.na(quiz)) == nrow(quiz))` columns containing the actual measurements and the classe. The remaining `r sum(colSums(is.na(quiz)) == nrow(quiz))` columns contain summary statistics but those are only recorded once for each measurement window and they happen to be NA for all the observations in the quiz dataset. For machine learning purposes, the identifier columns as well as the columns containing summary statistics are both removed and only the actual measurements along with their classes are kept.
+
+```{r remove_columns}
+nonmeas <- head(names(training), 7)
+print(nonmeas)
+NAcols <- colnames(quiz)[colSums(is.na(quiz)) == nrow(quiz)]
+final_train <- training[, !(colnames(training) %in% c(nonmeas, NAcols))]
+final_quiz  <- quiz[, !(colnames(quiz) %in% c(nonmeas, NAcols))]
+```
+
+To assess the out of bag error rate, we'll divide the training dataset into training (60%) and testing (40%) datasets.
+
+```{r create_partition}
+inTrain <- createDataPartition(y = final_train$classe, p = 0.6, list = FALSE)
+train0 <- final_train[inTrain, ]
+test0 <- final_train[-inTrain, ]
+```
+
+Then we train a simple random forest with 100 trees to classify any measurements into one of the classes A, B, C, D and E.
+
+```{r create_model}
+model <- randomForest(classe ~ ., data = train0, ntree = 100)
+model
+```
+
+As we can see from above, the model has an estimated out of bag error rate of around `r round(100* tail(model$err.rate, 1)[1], 2)`%. Now we can use our test dataset to cross validate this error rate.
+
+```{r OOB_error_rate}
+test_predictions <- predict(model, newdata = test0)
+table(test0$classe, test_predictions)
+```
+
+The predictions seem to be near perfect. From above we can conclude that the out of bag error rate in our test dataset was in fact slightly higher than the estimate at around `r round(100 * sum(test_predictions != test0$classe) / nrow(test0), 2)`%.
+
+As our model seems to be fairing pretty well in both the training and the test datasets we are now ready to predict what the classes would be within the quiz dataset.
+
+```{r predict_quiz}
+predict(model, newdata = final_quiz)
+```
+
+These turn all out to be right. This was not entirely unexpected as an additional training with 200 trees lead to the exact same predictions within the quiz data even though there were some differences within the test dataset. If we look at how the estimated error behaves as a function of the number of trees in the model, we can conclude that around 50 trees would probably have resulted with near-similar predictions.
+
+```{r plot_error}
+plot(model, log = "y")
+```
+
+The most important variable seems to be roll attitude at the belt.
+
+```{r plot_importance}
+varImpPlot(model)
+```
